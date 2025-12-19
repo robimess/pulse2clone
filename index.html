@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>PULSE-STYLE Synth (WebAudio)</title>
+<style>
+  :root{--bg:#0d1016;--panel:#141926;--line:#273044;--text:#e8eef6;--muted:#9aa7bd;--accent:#9ae6b4}
+  *{box-sizing:border-box;font-family:Inter,system-ui,Segoe UI,Roboto,Helvetica,Arial}
+  body{margin:0;background:radial-gradient(1200px 900px at 70% -10%, #1e2434 0%, #0d1016 60%);color:var(--text)}
+  header,footer{padding:14px 18px;border-bottom:1px solid #1f2634}
+  footer{border-top:1px solid #1f2634;border-bottom:0;text-align:center;color:#9aa7bd;font-size:12px}
+  h1{margin:0;font-size:18px;letter-spacing:.5px}
+  main{max-width:1200px;margin:0 auto;padding:16px}
+  .grid{display:grid;gap:14px;grid-template-columns:repeat(12,1fr)}
+  .panel{background:linear-gradient(180deg,#151b27,#0f131c);border:1px solid #223047;border-radius:12px;padding:12px}
+  .panel h2{margin:0 0 8px;font-size:14px;color:#cdd6e5}
+  .row{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  .control{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+  label{font-size:12px;color:var(--muted)}
+  input[type="range"]{width:100%}
+  select,input[type="text"]{background:#0f141d;border:1px solid #273044;color:var(--text);border-radius:8px;padding:6px 8px}
+  .btn{appearance:none;border:1px solid #2b3950;background:#0e141d;color:#e8eef6;border-radius:8px;padding:8px 10px;cursor:pointer}
+  .btn:hover{border-color:#3a4d6c}
+  .btn.primary{border-color:#3b6b55;background:#103022;color:#c6f5d9}
+  .btn.danger{border-color:#5a2d2d;background:#291212;color:#ffd6d6}
+  .kbd{font-family:ui-monospace,Consolas,Menlo,monospace;padding:1px 6px;border:1px solid #273044;border-radius:6px;background:#0b0f16}
+  .meter{height:6px;border-radius:999px;background:#0e1118;overflow:hidden}
+  .meter>span{display:block;height:100%;background:linear-gradient(90deg,#3bd7a0,#6de8e2);width:0%}
+  .tag{padding:2px 8px;border:1px solid #2b3950;border-radius:999px;font-size:12px;color:#cbd5e1;background:#0f131c;margin-left:8px}
+  .c3{grid-column:span 3}.c4{grid-column:span 4}.c5{grid-column:span 5}.c6{grid-column:span 6}.c8{grid-column:span 8}.c12{grid-column:span 12}
+  @media (max-width:980px){.grid{grid-template-columns:repeat(6,1fr)} .c12,.c8,.c6,.c5,.c4{grid-column:span 6} .c3{grid-column:span 3}}
+</style>
+</head>
+<body>
+<header>
+  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+    <div>
+      <h1>PULSE-STYLE WEB SYNTH <span class="tag">AudioWorklet</span></h1>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:#9aa7bd">
+        <button id="startAudio" class="btn primary">START AUDIO</button>
+        <span class="tag">Audio: <span id="audioState">suspendido</span></span>
+        <span class="tag">SR: <span id="sr"></span></span>
+        <span class="tag">MIDI: <span id="midiStatus">No</span></span>
+        <span class="tag">Teclado: <span class="kbd">Z S X D C V G B H N J M</span></span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="grid">
+    <section class="panel c3">
+      <h2>Master</h2>
+      <div class="control"><label>Volumen</label><input id="masterGain" type="range" min="0" max="1" step="0.001" value="0.6"></div>
+      <div class="control"><label>Modo</label><select id="polyMode"><option value="mono">Mono</option><option value="para">Parafónico (8)</option></select></div>
+      <div class="control"><label>Glide (s)</label><input id="glide" type="range" min="0" max="0.3" step="0.001" value="0.02"></div>
+      <div class="control"><label>Drive</label><input id="drive" type="range" min="0" max="2" step="0.01" value="0.25"></div>
+      <div class="control"><label>Salida</label><div class="meter"><span id="meterBar"></span></div></div>
+    </section>
+
+    <section class="panel c5">
+      <h2>Osciladores</h2>
+      <div class="row">
+        <div>
+          <div class="control"><label>OSC1 forma</label><select id="osc1Type"><option>saw</option><option>square</option><option>triangle</option></select></div>
+          <div class="control"><label>Semitonos</label><input id="osc1Semi" type="range" min="-24" max="24" step="1" value="0"></div>
+          <div class="control"><label>PW (square)</label><input id="osc1PW" type="range" min="0.05" max="0.95" step="0.001" value="0.5"></div>
+          <div class="control"><label>Level</label><input id="osc1Gain" type="range" min="0" max="1" step="0.001" value="0.7"></div>
+        </div>
+        <div>
+          <div class="control"><label>OSC2 forma</label><select id="osc2Type"><option>saw</option><option>square</option><option>triangle</option></select></div>
+          <div class="control"><label>Semitonos</label><input id="osc2Semi" type="range" min="-24" max="24" step="1" value="7"></div>
+          <div class="control"><label>Detune (cent)</label><input id="osc2Det" type="range" min="-50" max="50" step="0.1" value="6"></div>
+          <div class="control"><label>Level</label><input id="osc2Gain" type="range" min="0" max="1" step="0.001" value="0.55"></div>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <div class="control"><label>Sub (-1 oct)</label><input id="subGain" type="range" min="0" max="1" step="0.001" value="0.35"></div>
+          <div class="control"><label>Noise</label><input id="noiseGain" type="range" min="0" max="1" step="0.001" value="0.05"></div>
+        </div>
+        <div>
+          <div class="control"><label>Sync 1→2</label><input id="sync12" type="checkbox"></div>
+          <div class="control"><label>Ring (1×2)</label><input id="ring" type="checkbox"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel c4">
+      <h2>Filtro LP 24 dB</h2>
+      <div class="control"><label>Cutoff (Hz)</label><input id="cutoff" type="range" min="40" max="12000" step="1" value="1600"></div>
+      <div class="control"><label>Resonancia</label><input id="res" type="range" min="0.05" max="1" step="0.001" value="0.22"></div>
+      <div class="control"><label>KeyTrack</label><input id="keytrack" type="range" min="0" max="1" step="0.001" value="0.5"></div>
+      <div class="control"><label>Env→Cutoff</label><input id="env2cut" type="range" min="-1" max="1" step="0.001" value="0.4"></div>
+    </section>
+
+    <section class="panel c4">
+      <h2>Envolventes</h2>
+      <div class="row">
+        <div>
+          <div style="font-size:12px;color:#9aa7bd">AMP</div>
+          <div class="control"><label>A</label><input id="aA" type="range" min="0" max="2" step="0.001" value="0.005"></div>
+          <div class="control"><label>D</label><input id="aD" type="range" min="0" max="2" step="0.001" value="0.15"></div>
+          <div class="control"><label>S</label><input id="aS" type="range" min="0" max="1" step="0.001" value="0.7"></div>
+          <div class="control"><label>R</label><input id="aR" type="range" min="0" max="3" step="0.001" value="0.2"></div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#9aa7bd">FILTER</div>
+          <div class="control"><label>A</label><input id="fA" type="range" min="0" max="2" step="0.001" value="0.01"></div>
+          <div class="control"><label>D</label><input id="fD" type="range" min="0" max="2" step="0.001" value="0.2"></div>
+          <div class="control"><label>S</label><input id="fS" type="range" min="0" max="1" step="0.001" value="0.1"></div>
+          <div class="control"><label>R</label><input id="fR" type="range" min="0" max="3" step="0.001" value="0.25"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel c4">
+      <h2>LFO & Arp</h2>
+      <div class="row">
+        <div>
+          <div style="font-size:12px;color:#9aa7bd">LFO</div>
+          <div class="control"><label>Wave</label><select id="lfoWave"><option>sine</option><option>triangle</option><option>square</option><option>sawtooth</option></select></div>
+          <div class="control"><label>Rate (Hz)</label><input id="lfoRate" type="range" min="0.05" max="20" step="0.01" value="5.5"></div>
+          <div class="control"><label>→ Pitch (cent)</label><input id="lfoPitch" type="range" min="0" max="100" step="0.1" value="0"></div>
+          <div class="control"><label>→ Cutoff (Hz)</label><input id="lfoCutoff" type="range" min="0" max="8000" step="1" value="0"></div>
+        </div>
+        <div>
+          <div style="font-size:12px;color:#9aa7bd">Arpegiador</div>
+          <div class="control"><label>Modo</label><select id="arpMode"><option>off</option><option>up</option><option>down</option><option>updown</option><option>random</option></select></div>
+          <div class="control"><label>Rate (ms)</label><input id="arpRate" type="range" min="60" max="600" step="1" value="140"></div>
+          <div class="control"><label>Octavas</label><input id="arpOct" type="range" min="1" max="3" step="1" value="1"></div>
+          <div class="control"><button class="btn" id="tapBtn">Tap</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel c12">
+      <h2>Presets</h2>
+      <div class="row">
+        <div>
+          <div class="control"><label>Nombre</label><input id="presetName" type="text" placeholder="Mi Bass Pulse"></div>
+          <button class="btn primary" id="savePreset">Guardar</button>
+        </div>
+        <div>
+          <div class="control"><label>Seleccionar</label><select id="presetList"></select></div>
+          <button class="btn" id="loadPreset">Cargar</button>
+          <button class="btn danger" id="deletePreset">Borrar</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel c12">
+      <h2>Teclado</h2>
+      <div style="font-size:12px;color:#9aa7bd">
+        Z–M para C mayor (S,D,G,H,J = sostenidos). Nota: si estás escribiendo en texto, no capturamos teclas.
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  Sintetizador WebAudio inspirado en Waldorf Pulse 2 (no oficial). Para plugin VST3/AU real, porta el DSP a C++ con JUCE o usa un wrapper WAM.
+</footer>
+
+<script type="module">
+const A4=440, A4M=69;
+const midiToHz = m => A4*Math.pow(2,(m-A4M)/12);
+const clamp = (v,a,b)=>Math.min(b,Math.max(a,v));
+
+const audio = new (window.AudioContext||window.webkitAudioContext)();
+document.getElementById('sr').textContent = audio.sampleRate + ' Hz';
+
+const audioStateEl = document.getElementById('audioState');
+const startBtn = document.getElementById('startAudio');
+
+async function armAudio(){
+  try{ await audio.resume(); }
+  catch(e){ console.error('audio.resume() falló:', e); }
+  finally{ audioStateEl.textContent = audio.state; }
+}
+startBtn.addEventListener('click', armAudio);
+setInterval(()=> audioStateEl.textContent = audio.state, 250);
+
+// Worklet
+await audio.audioWorklet.addModule('./pulse2-worklet.js');
+
+// Master chain
+const master = audio.createGain(); master.gain.value = 0.6;
+const drive = audio.createGain(); drive.gain.value = 0.15;
+const shaper = audio.createWaveShaper();
+shaper.curve = new Float32Array(2048).map((_,i)=>{ const x=i/1024-1; return Math.tanh(2*x); });
+
+const limiter = audio.createDynamicsCompressor();
+limiter.threshold.value=-6; limiter.knee.value=3; limiter.ratio.value=12; limiter.attack.value=0.003; limiter.release.value=0.15;
+
+const meter = audio.createAnalyser(); meter.fftSize=256;
+const meterData = new Uint8Array(meter.frequencyBinCount);
+
+drive.connect(shaper).connect(limiter).connect(master).connect(meter).connect(audio.destination);
+
+// Noise buffer
+const noiseBuf = (()=> {
+  const len = audio.sampleRate*2;
+  const b = audio.createBuffer(1,len,audio.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i=0;i<len;i++) d[i] = (Math.random()*2-1)*0.6;
+  return b;
+})();
+
+// LFO global
+const lfo = audio.createOscillator(); lfo.type='sine'; lfo.frequency.value=5.5;
+const lfoPitch = audio.createGain(); lfoPitch.gain.value=0; // cents
+const lfoCut = audio.createGain(); lfoCut.gain.value=0;     // Hz
+lfo.connect(lfoPitch); lfo.connect(lfoCut); lfo.start();
+
+function getNum(id){ return parseFloat(document.getElementById(id).value); }
+function getVal(id){ const el=document.getElementById(id); return el.type==='checkbox'?el.checked:el.value; }
+
+const voices = new Map();
+const held = new Set();
+const maxVoices = 8;
+let lastFreq = null;
+
+function params(){
+  return {
+    cutoff:getNum('cutoff'),
+    res:getNum('res'),
+    keytrack:getNum('keytrack'),
+    env2cut:getNum('env2cut'),
+
+    osc1Type:getVal('osc1Type'),
+    osc2Type:getVal('osc2Type'),
+    osc1Semi:parseInt(getVal('osc1Semi')),
+    osc2Semi:parseInt(getVal('osc2Semi')),
+    osc1PW:getNum('osc1PW'),
+    osc1Gain:getNum('osc1Gain'),
+    osc2Gain:getNum('osc2Gain'),
+    subGain:getNum('subGain'),
+    noiseGain:getNum('noiseGain'),
+    osc2Det:getNum('osc2Det'),
+    sync12:getVal('sync12'),
+    ring:getVal('ring'),
+
+    glide:getNum('glide'),
+    lastFreq
+  };
+}
+
+function applyGlobalLFO(){
+  const t = audio.currentTime;
+  lfo.type = getVal('lfoWave');
+  lfo.frequency.setValueAtTime(getNum('lfoRate'), t);
+  lfoPitch.gain.setValueAtTime(getNum('lfoPitch'), t);
+  lfoCut.gain.setValueAtTime(getNum('lfoCutoff'), t);
+}
+
+class Voice{
+  constructor(note, p){
+    this.note = note;
+    this.freq = midiToHz(note);
+
+    // Worklet core
+    this.core = new AudioWorkletNode(audio,'pulse2-osc',{numberOfOutputs:1,outputChannelCount:[1]});
+    this.core.parameters.get('freqHz').setValueAtTime(this.freq, audio.currentTime);
+
+    // Filter 24dB aprox (2 biquads)
+    this.f1 = audio.createBiquadFilter(); this.f1.type='lowpass';
+    this.f2 = audio.createBiquadFilter(); this.f2.type='lowpass';
+
+    // Noise
+    this.noise = audio.createBufferSource(); this.noise.buffer = noiseBuf; this.noise.loop = true;
+    this.noiseGain = audio.createGain();
+
+    // AMP
+    this.amp = audio.createGain(); this.amp.gain.value = 0.00001;
+
+    // Routing
+    this.core.connect(this.f1).connect(this.f2).connect(this.amp).connect(drive);
+    this.noise.connect(this.noiseGain).connect(this.f1);
+
+    // LFO routing
+    lfoPitch.connect(this.core.parameters.get('lfoPitchCents'));
+    lfoCut.connect(this.f1.frequency);
+    lfoCut.connect(this.f2.frequency);
+
+    // Start noise
+    this.noise.start();
+
+    // Apply initial params (LIVE method)
+    this.applyLiveParams(p, true);
+
+    // Glide
+    const g = p.glide;
+    if (g>0 && p.lastFreq){
+      const t = audio.currentTime;
+      const start=p.lastFreq, target=this.freq;
+      const param = this.core.parameters.get('freqHz');
+      param.cancelScheduledValues(t);
+      param.setValueAtTime(start, t);
+      param.exponentialRampToValueAtTime(target, t+g);
+    }
+
+    // Envelopes initial
+    this.applyAmpEnv(1);
+    this.applyFilterEnv(1, true);
+  }
+
+setCut(cut,res){
+  const t = audio.currentTime;
+  const q = res*20;
+
+  const ramp = 0.01; // 10ms
+  this.f1.frequency.cancelScheduledValues(t);
+  this.f2.frequency.cancelScheduledValues(t);
+  this.f1.Q.cancelScheduledValues(t);
+  this.f2.Q.cancelScheduledValues(t);
+
+  this.f1.frequency.setTargetAtTime(cut, t, ramp);
+  this.f2.frequency.setTargetAtTime(cut, t, ramp);
+  this.f1.Q.setTargetAtTime(q, t, ramp);
+  this.f2.Q.setTargetAtTime(q, t, ramp);
+}
+
+
+  keytrack(amount){
+    const base = getNum('cutoff');
+    const offset = (this.note-60)*100*amount;
+    this.setCut(clamp(base+offset,40,16000), getNum('res'));
+  }
+
+  applyAmpEnv(vel=1){
+    const A=getNum('aA'),D=getNum('aD'),S=getNum('aS'),R=getNum('aR'), t=audio.currentTime;
+    const peak=1.0*vel;
+    const g=this.amp.gain;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(Math.max(g.value,0.00001), t);
+    g.linearRampToValueAtTime(peak, t+A);
+    g.linearRampToValueAtTime(peak*S, t+A+D);
+    this.aEnv={R};
+  }
+
+  applyFilterEnv(vel=1, retrig=false){
+    const A=getNum('fA'),D=getNum('fD'),S=getNum('fS'),R=getNum('fR'), t=audio.currentTime;
+    const envAmt=getNum('env2cut'), base=getNum('cutoff');
+    const peak=clamp(base + Math.sign(envAmt)*Math.abs(envAmt)*5000*vel, 40,16000);
+
+    [this.f1.frequency, this.f2.frequency].forEach(p=>{
+      p.cancelScheduledValues(t);
+      if (retrig) p.setValueAtTime(p.value, t);
+      p.linearRampToValueAtTime(peak, t+A);
+      p.linearRampToValueAtTime(base + (peak-base)*S, t+A+D);
+    });
+
+    this.fEnv={R,base};
+  }
+
+  // ✅ LIVE: actualiza voces activas (incluye postMessage + AudioParam)
+  applyLiveParams(p, initial=false){
+    const t = audio.currentTime;
+
+    // Worklet params (LIVE)
+    this.core.parameters.get('osc1Gain').setValueAtTime(p.osc1Gain, t);
+    this.core.parameters.get('osc2Gain').setValueAtTime(p.osc2Gain, t);
+    this.core.parameters.get('subGain').setValueAtTime(p.subGain, t);
+    this.core.parameters.get('osc1PW').setValueAtTime(p.osc1PW, t);
+    this.core.parameters.get('osc2Det').setValueAtTime(p.osc2Det, t);
+
+    // Worklet setup (LIVE)
+    this.core.port.postMessage({
+      type:'setup',
+      osc1Type:p.osc1Type,
+      osc2Type:p.osc2Type,
+      osc1Semi:p.osc1Semi|0,
+      osc2Semi:p.osc2Semi|0,
+      sync12:!!p.sync12,
+      ring:!!p.ring
+    });
+
+    // Noise (LIVE)
+    this.noiseGain.gain.setTargetAtTime(p.noiseGain, audio.currentTime, 0.01);
+
+    // Filter (LIVE)
+    this.setCut(p.cutoff, p.res);
+    this.keytrack(p.keytrack);
+
+    // Env->cutoff: afecta *la forma de la env*, lo dejamos "next note".
+    // Si quieres "retrigger on tweak", te lo activo después.
+    if (initial){
+      // asegurar estado coherente
+      this.setCut(p.cutoff, p.res);
+    }
+  }
+
+  noteOff(){
+    const t=audio.currentTime;
+    const R=this.aEnv?.R ?? 0.2;
+    const fR=this.fEnv?.R ?? 0.25;
+
+    const g=this.amp.gain;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(Math.max(g.value,0.00001), t);
+    g.exponentialRampToValueAtTime(0.00001, t+R);
+
+    [this.f1.frequency,this.f2.frequency].forEach(p=>{
+      p.cancelScheduledValues(t);
+      p.setValueAtTime(p.value,t);
+      p.linearRampToValueAtTime(getNum('cutoff'), t+fR);
+    });
+
+    const stopAt = t+Math.max(R,fR)+0.05;
+    this.noise.stop(stopAt);
+    setTimeout(()=>this.dispose(), (stopAt-audio.currentTime)*1000+20);
+  }
+
+  dispose(){
+    try{
+      this.core.disconnect();
+      this.f1.disconnect(); this.f2.disconnect();
+      this.amp.disconnect();
+      this.noiseGain.disconnect();
+    }catch(e){}
+  }
+}
+
+function noteOn(midi, vel=100){
+  if (getVal('polyMode')==='mono'){
+    for (const [n,v] of voices){ v.noteOff(); voices.delete(n); }
+  } else if (voices.size>=maxVoices){
+    const oldest=[...voices.entries()][0];
+    oldest[1].noteOff();
+    voices.delete(oldest[0]);
+  }
+
+  const p = params();
+  const v = new Voice(midi, p);
+  voices.set(midi, v);
+  held.add(midi);
+  lastFreq = midiToHz(midi);
+
+  applyGlobalLFO();
+}
+
+function noteOff(midi){
+  const v=voices.get(midi);
+  if (v){ v.noteOff(); voices.delete(midi); }
+  held.delete(midi);
+}
+
+// ----- LIVE apply para todas las voces -----
+function applyLiveToAllVoices(){
+  const p = params();
+  applyGlobalLFO();
+  for (const v of voices.values()) v.applyLiveParams(p);
+}
+
+// Master controls
+document.getElementById('masterGain').addEventListener('input',e=>{
+  master.gain.setValueAtTime(parseFloat(e.target.value), audio.currentTime);
+});
+document.getElementById('drive').addEventListener('input',e=>{
+  drive.gain.setValueAtTime(parseFloat(e.target.value), audio.currentTime);
+});
+
+// ✅ Todos los controles que deben ser LIVE (mientras suena)
+const liveControls = [
+  'osc1Type','osc2Type','osc1Semi','osc2Semi','osc1PW',
+  'osc1Gain','osc2Gain','subGain','noiseGain',
+  'osc2Det','sync12','ring',
+  'cutoff','res','keytrack',
+  'lfoWave','lfoRate','lfoPitch','lfoCutoff'
+];
+for (const id of liveControls){
+  const el = document.getElementById(id);
+  if (!el) continue;
+  el.addEventListener('input', applyLiveToAllVoices);
+  el.addEventListener('change', applyLiveToAllVoices);
+}
+
+// Output meter
+const meterBar=document.getElementById('meterBar');
+(function animate(){
+  meter.getByteTimeDomainData(meterData);
+  let s=0;
+  for(let i=0;i<meterData.length;i++){
+    const x=(meterData[i]-128)/128; s+=x*x;
+  }
+  const rms=Math.sqrt(s/meterData.length);
+  meterBar.style.width=(clamp(rms*140,0,100)).toFixed(1)+'%';
+  requestAnimationFrame(animate);
+})();
+
+// Arpegiador
+let arpTimer=null, taps=[];
+function setArp(){
+  if (arpTimer){ clearInterval(arpTimer); arpTimer=null; }
+  const mode=getVal('arpMode'); if (mode==='off') return;
+
+  const rate=parseInt(getVal('arpRate')), oct=parseInt(getVal('arpOct'));
+  arpTimer=setInterval(()=>{
+    if (!held.size) return;
+    const base=[...held].sort((a,b)=>a-b);
+    let pat=[];
+    for (let o=0;o<oct;o++){
+      let slice=base.map(n=>n+o*12);
+      if (mode==='down') slice=slice.reverse();
+      if (mode==='updown') slice = base.concat([...base].reverse().slice(1,-1)).map(n=>n+o*12);
+      if (mode==='random') slice = slice.sort(()=>Math.random()-0.5);
+      pat=pat.concat(slice);
+    }
+    const step=pat[Math.floor((Date.now()/rate)%pat.length)];
+    if (getVal('polyMode')==='mono'){
+      for (const [k,v] of voices){ v.noteOff(); voices.delete(k); }
+      noteOn(step,100);
+    }
+  }, rate);
+}
+['arpMode','arpRate','arpOct'].forEach(id=>document.getElementById(id).addEventListener('input', setArp));
+
+document.getElementById('tapBtn').addEventListener('click',()=>{
+  const t=performance.now(); taps.push(t); if (taps.length>6) taps.shift();
+  if (taps.length>=2){
+    const ints=[]; for(let i=1;i<taps.length;i++) ints.push(taps[i]-taps[i-1]);
+    const avg=ints.reduce((a,b)=>a+b,0)/ints.length;
+    const v=Math.max(60,Math.min(600,Math.round(avg)));
+    const el=document.getElementById('arpRate'); el.value=v; setArp();
+  }
+});
+
+// ✅ Keyboard mapping robusto (e.code)
+const codeMap = {
+  KeyZ:48, KeyS:49, KeyX:50, KeyD:51, KeyC:52,
+  KeyV:53, KeyG:54, KeyB:55, KeyH:56, KeyN:57,
+  KeyJ:58, KeyM:59,
+  Comma:60, KeyL:61, Period:62, Semicolon:63, Slash:64
+};
+const downCodes = new Set();
+
+// Solo bloqueamos si realmente estás escribiendo texto
+function isTypingTarget(t){
+  if (!t || !t.tagName) return false;
+  const tag = t.tagName.toLowerCase();
+  if (tag === 'textarea') return true;
+  if (tag === 'input'){
+    const type = (t.getAttribute('type') || '').toLowerCase();
+    return type === 'text' || type === 'number' || type === 'email' || type === 'search' || type === 'password';
+  }
+  return false;
+}
+
+window.addEventListener('keydown', async (e)=>{
+  if (e.repeat) return;
+
+  const code = e.code;
+  if (!(code in codeMap)) return;
+
+  if (isTypingTarget(e.target)) return;
+
+  // si el foco quedó en range/select, lo soltamos para tocar al tiro
+  const ae = document.activeElement;
+  if (ae && ae !== document.body){
+    const tag = ae.tagName ? ae.tagName.toLowerCase() : '';
+    const type = (tag === 'input') ? ((ae.getAttribute('type') || '').toLowerCase()) : '';
+    const isFocusableControl =
+      tag === 'select' ||
+      tag === 'button' ||
+      (tag === 'input' && (type === 'range' || type === 'checkbox')) ||
+      tag === 'a';
+    if (isFocusableControl && typeof ae.blur === 'function') ae.blur();
+  }
+
+  if (audio.state !== 'running') await armAudio();
+
+  if (!downCodes.has(code)){
+    downCodes.add(code);
+    noteOn(codeMap[code], 110);
+    setArp();
+  }
+  e.preventDefault();
+},{capture:true});
+
+window.addEventListener('keyup', (e)=>{
+  const code = e.code;
+  if (!(code in codeMap)) return;
+  downCodes.delete(code);
+  noteOff(codeMap[code]);
+  e.preventDefault();
+},{capture:true});
+
+// Fallback: primer click desbloquea audio
+const resumeOnPointer = ()=>{ armAudio(); window.removeEventListener('pointerdown', resumeOnPointer); };
+window.addEventListener('pointerdown', resumeOnPointer);
+
+// MIDI
+const midiStatus = s => document.getElementById('midiStatus').textContent=s;
+if (navigator.requestMIDIAccess){
+  navigator.requestMIDIAccess().then(acc=>{
+    midiStatus('Sí');
+    function hook(inp){
+      inp.onmidimessage = ev=>{
+        const [st,d1,d2]=ev.data, cmd=st&0xF0;
+        if (cmd===0x90 && d2>0) { noteOn(d1,d2); setArp(); }
+        else if (cmd===0x80 || (cmd===0x90 && d2===0)) { noteOff(d1); }
+      };
+    }
+    for (const i of acc.inputs.values()) hook(i);
+    acc.onstatechange=()=>{ for (const i of acc.inputs.values()) hook(i); };
+  }).catch(()=>midiStatus('No'));
+}
+
+// Presets
+const presetList=document.getElementById('presetList'), presetName=document.getElementById('presetName');
+function ids(){
+  return ['masterGain','polyMode','glide','drive',
+    'osc1Type','osc1Semi','osc1PW','osc1Gain',
+    'osc2Type','osc2Semi','osc2Det','osc2Gain',
+    'subGain','noiseGain','sync12','ring',
+    'cutoff','res','keytrack','env2cut',
+    'aA','aD','aS','aR','fA','fD','fS','fR',
+    'lfoWave','lfoRate','lfoPitch','lfoCutoff',
+    'arpMode','arpRate','arpOct'
+  ];
+}
+function snapshot(){
+  const obj={};
+  ids().forEach(id=>{
+    const el=document.getElementById(id);
+    obj[id]=el.type==='checkbox'?el.checked:el.value;
+  });
+  return obj;
+}
+function applySnap(o){
+  Object.entries(o).forEach(([id,val])=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    if(el.type==='checkbox') el.checked=!!val;
+    else el.value=val;
+    el.dispatchEvent(new Event('input'));
+    el.dispatchEvent(new Event('change'));
+  });
+  // aseguramos LIVE después de cargar
+  applyLiveToAllVoices();
+}
+function refresh(){
+  const keys=Object.keys(localStorage).filter(k=>k.startsWith('PULSE_PRESET_')).sort();
+  presetList.innerHTML='';
+  keys.forEach(k=>{
+    const op=document.createElement('option');
+    op.value=k;
+    op.textContent=k.replace('PULSE_PRESET_','');
+    presetList.appendChild(op);
+  });
+}
+document.getElementById('savePreset').addEventListener('click',()=>{
+  const name=(presetName.value||'Preset').replace(/\s+/g,'_');
+  localStorage.setItem('PULSE_PRESET_'+name, JSON.stringify(snapshot()));
+  refresh();
+});
+document.getElementById('loadPreset').addEventListener('click',()=>{
+  const key='PULSE_PRESET_'+(presetList.value||'');
+  const raw=localStorage.getItem(key);
+  if(raw) applySnap(JSON.parse(raw));
+});
+document.getElementById('deletePreset').addEventListener('click',()=>{
+  const key='PULSE_PRESET_'+(presetList.value||'');
+  if(localStorage.getItem(key)) localStorage.removeItem(key);
+  refresh();
+});
+refresh();
+
+// init LFO UI → engine
+applyGlobalLFO();
+</script>
+</body>
+</html>
