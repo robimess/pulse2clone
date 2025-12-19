@@ -30,6 +30,29 @@
   .tag{padding:2px 8px;border:1px solid #2b3950;border-radius:999px;font-size:12px;color:#cbd5e1;background:#0f131c;margin-left:8px}
   .c3{grid-column:span 3}.c4{grid-column:span 4}.c5{grid-column:span 5}.c6{grid-column:span 6}.c8{grid-column:span 8}.c12{grid-column:span 12}
   @media (max-width:980px){.grid{grid-template-columns:repeat(6,1fr)} .c12,.c8,.c6,.c5,.c4{grid-column:span 6} .c3{grid-column:span 3}}
+
+  /* =============== Step Sequencer UI =============== */
+  .seq{display:flex;flex-direction:column;gap:10px}
+  .seq-top{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .seq-grid{display:grid;grid-template-columns:repeat(4, 1fr);gap:8px;}
+  .seq-step{min-width: 0;}@media (max-width: 980px){.seq-grid{grid-template-columns:repeat(2, 1fr);}}@media (max-width: 520px){
+  .seq-grid{grid-template-columns:1fr;}}
+  .seq-step{border:1px solid #273044;border-radius:10px;padding:8px;background:#0f131c;display:flex;flex-direction:column;gap:8px}
+  .seq-step.on{border-color:#3b6b55}
+  .seq-step.play{box-shadow:0 0 0 2px rgba(154,230,180,.35) inset}
+  .seq-pad{width:100%;padding:8px 0;border-radius:8px;border:1px solid #2b3950;background:#0e141d;color:#e8eef6;cursor:pointer}
+  .seq-step.on .seq-pad{border-color:#3b6b55;background:#103022}
+  .seq-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .seq-row2{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .seq-note{font-size:12px;color:#cbd5e1}
+
+  .seq-slide{border:1px solid #2b3950;background:#0e141d;color:#9aa7bd;border-radius:8px;padding:6px 8px;cursor:pointer;font-size:12px}
+  .seq-slide.on{border-color:#3b6b55;background:#103022;color:#c6f5d9}
+
+  .knob{width:64px;user-select:none;display:flex;flex-direction:column;align-items:center;gap:6px}
+  .knob-cap{width:36px;height:36px;border-radius:999px;border:1px solid #2b3950;background:radial-gradient(circle at 30% 30%, #1f2a3d, #0b0f16);position:relative}
+  .knob-cap::after{content:"";position:absolute;top:5px;left:50%;transform:translateX(-50%);width:3px;height:10px;border-radius:2px;background:#9ae6b4}
+  .knob-txt{font-size:10px;color:#9aa7bd;text-align:center;line-height:1.1}
 </style>
 </head>
 <body>
@@ -135,6 +158,15 @@
       </div>
     </section>
 
+    <!-- ✅ STEP SEQUENCER -->
+    <section class="panel c12">
+      <h2>Step Sequencer</h2>
+      <div style="font-size:12px;color:#9aa7bd;margin-bottom:10px">
+        16 steps • NOTE (C-4..B4) • GATE 5–95% • ACCENT (velocity) • SLIDE (legato+glide). Tip: <b>Shift</b> = ajuste fino en knobs.
+      </div>
+      <div id="sequencerMount"></div>
+    </section>
+
     <section class="panel c12">
       <h2>Presets</h2>
       <div class="row">
@@ -164,6 +196,8 @@
 </footer>
 
 <script type="module">
+import { createStepSequencer } from './step-sequencer.js';
+
 const A4=440, A4M=69;
 const midiToHz = m => A4*Math.pow(2,(m-A4M)/12);
 const clamp = (v,a,b)=>Math.min(b,Math.max(a,v));
@@ -222,6 +256,18 @@ const held = new Set();
 const maxVoices = 8;
 let lastFreq = null;
 
+// ======= Sequencer MONO voice (para slide) =======
+let seqVoice = null; // { core,f1,f2,noise,noiseGain,amp,aEnv,fEnv,note }
+let seqLastHz = null;
+
+function applyGlobalLFO(){
+  const t = audio.currentTime;
+  lfo.type = getVal('lfoWave');
+  lfo.frequency.setValueAtTime(getNum('lfoRate'), t);
+  lfoPitch.gain.setValueAtTime(getNum('lfoPitch'), t);
+  lfoCut.gain.setValueAtTime(getNum('lfoCutoff'), t);
+}
+
 function params(){
   return {
     cutoff:getNum('cutoff'),
@@ -247,50 +293,33 @@ function params(){
   };
 }
 
-function applyGlobalLFO(){
-  const t = audio.currentTime;
-  lfo.type = getVal('lfoWave');
-  lfo.frequency.setValueAtTime(getNum('lfoRate'), t);
-  lfoPitch.gain.setValueAtTime(getNum('lfoPitch'), t);
-  lfoCut.gain.setValueAtTime(getNum('lfoCutoff'), t);
-}
-
 class Voice{
   constructor(note, p){
     this.note = note;
     this.freq = midiToHz(note);
 
-    // Worklet core
     this.core = new AudioWorkletNode(audio,'pulse2-osc',{numberOfOutputs:1,outputChannelCount:[1]});
     this.core.parameters.get('freqHz').setValueAtTime(this.freq, audio.currentTime);
 
-    // Filter 24dB aprox (2 biquads)
     this.f1 = audio.createBiquadFilter(); this.f1.type='lowpass';
     this.f2 = audio.createBiquadFilter(); this.f2.type='lowpass';
 
-    // Noise
     this.noise = audio.createBufferSource(); this.noise.buffer = noiseBuf; this.noise.loop = true;
     this.noiseGain = audio.createGain();
 
-    // AMP
     this.amp = audio.createGain(); this.amp.gain.value = 0.00001;
 
-    // Routing
     this.core.connect(this.f1).connect(this.f2).connect(this.amp).connect(drive);
     this.noise.connect(this.noiseGain).connect(this.f1);
 
-    // LFO routing
     lfoPitch.connect(this.core.parameters.get('lfoPitchCents'));
     lfoCut.connect(this.f1.frequency);
     lfoCut.connect(this.f2.frequency);
 
-    // Start noise
     this.noise.start();
 
-    // Apply initial params (LIVE method)
     this.applyLiveParams(p, true);
 
-    // Glide
     const g = p.glide;
     if (g>0 && p.lastFreq){
       const t = audio.currentTime;
@@ -301,27 +330,25 @@ class Voice{
       param.exponentialRampToValueAtTime(target, t+g);
     }
 
-    // Envelopes initial
     this.applyAmpEnv(1);
     this.applyFilterEnv(1, true);
   }
 
-setCut(cut,res){
-  const t = audio.currentTime;
-  const q = res*20;
+  setCut(cut,res){
+    const t = audio.currentTime;
+    const q = res*20;
+    const ramp = 0.01;
 
-  const ramp = 0.01; // 10ms
-  this.f1.frequency.cancelScheduledValues(t);
-  this.f2.frequency.cancelScheduledValues(t);
-  this.f1.Q.cancelScheduledValues(t);
-  this.f2.Q.cancelScheduledValues(t);
+    this.f1.frequency.cancelScheduledValues(t);
+    this.f2.frequency.cancelScheduledValues(t);
+    this.f1.Q.cancelScheduledValues(t);
+    this.f2.Q.cancelScheduledValues(t);
 
-  this.f1.frequency.setTargetAtTime(cut, t, ramp);
-  this.f2.frequency.setTargetAtTime(cut, t, ramp);
-  this.f1.Q.setTargetAtTime(q, t, ramp);
-  this.f2.Q.setTargetAtTime(q, t, ramp);
-}
-
+    this.f1.frequency.setTargetAtTime(cut, t, ramp);
+    this.f2.frequency.setTargetAtTime(cut, t, ramp);
+    this.f1.Q.setTargetAtTime(q, t, ramp);
+    this.f2.Q.setTargetAtTime(q, t, ramp);
+  }
 
   keytrack(amount){
     const base = getNum('cutoff');
@@ -355,18 +382,15 @@ setCut(cut,res){
     this.fEnv={R,base};
   }
 
-  // ✅ LIVE: actualiza voces activas (incluye postMessage + AudioParam)
   applyLiveParams(p, initial=false){
     const t = audio.currentTime;
 
-    // Worklet params (LIVE)
     this.core.parameters.get('osc1Gain').setValueAtTime(p.osc1Gain, t);
     this.core.parameters.get('osc2Gain').setValueAtTime(p.osc2Gain, t);
     this.core.parameters.get('subGain').setValueAtTime(p.subGain, t);
     this.core.parameters.get('osc1PW').setValueAtTime(p.osc1PW, t);
     this.core.parameters.get('osc2Det').setValueAtTime(p.osc2Det, t);
 
-    // Worklet setup (LIVE)
     this.core.port.postMessage({
       type:'setup',
       osc1Type:p.osc1Type,
@@ -377,17 +401,12 @@ setCut(cut,res){
       ring:!!p.ring
     });
 
-    // Noise (LIVE)
     this.noiseGain.gain.setTargetAtTime(p.noiseGain, audio.currentTime, 0.01);
 
-    // Filter (LIVE)
     this.setCut(p.cutoff, p.res);
     this.keytrack(p.keytrack);
 
-    // Env->cutoff: afecta *la forma de la env*, lo dejamos "next note".
-    // Si quieres "retrigger on tweak", te lo activo después.
     if (initial){
-      // asegurar estado coherente
       this.setCut(p.cutoff, p.res);
     }
   }
@@ -423,6 +442,156 @@ setCut(cut,res){
   }
 }
 
+// ====== Sequencer voice helpers (mono + slide) ======
+function seqEnsureVoice(){
+  if (seqVoice) return seqVoice;
+  const p = params();
+
+  const core = new AudioWorkletNode(audio,'pulse2-osc',{numberOfOutputs:1,outputChannelCount:[1]});
+  const f1 = audio.createBiquadFilter(); f1.type='lowpass';
+  const f2 = audio.createBiquadFilter(); f2.type='lowpass';
+
+  const noise = audio.createBufferSource(); noise.buffer=noiseBuf; noise.loop=true;
+  const noiseGain = audio.createGain();
+
+  const amp = audio.createGain(); amp.gain.value=0.00001;
+
+  core.connect(f1).connect(f2).connect(amp).connect(drive);
+  noise.connect(noiseGain).connect(f1);
+
+  lfoPitch.connect(core.parameters.get('lfoPitchCents'));
+  lfoCut.connect(f1.frequency); lfoCut.connect(f2.frequency);
+
+  noise.start();
+
+  seqVoice = { core,f1,f2,noise,noiseGain,amp, note:60, aEnv:{R:getNum('aR')}, fEnv:{R:getNum('fR')} };
+  // aplicar live setup inicial (sin usar Voice class)
+  seqApplyLive(p);
+  return seqVoice;
+}
+
+function seqApplyLive(p){
+  if (!seqVoice) return;
+  const t = audio.currentTime;
+
+  seqVoice.core.parameters.get('osc1Gain').setValueAtTime(p.osc1Gain, t);
+  seqVoice.core.parameters.get('osc2Gain').setValueAtTime(p.osc2Gain, t);
+  seqVoice.core.parameters.get('subGain').setValueAtTime(p.subGain, t);
+  seqVoice.core.parameters.get('osc1PW').setValueAtTime(p.osc1PW, t);
+  seqVoice.core.parameters.get('osc2Det').setValueAtTime(p.osc2Det, t);
+
+  seqVoice.core.port.postMessage({
+    type:'setup',
+    osc1Type:p.osc1Type,
+    osc2Type:p.osc2Type,
+    osc1Semi:p.osc1Semi|0,
+    osc2Semi:p.osc2Semi|0,
+    sync12:!!p.sync12,
+    ring:!!p.ring
+  });
+
+  // noise
+  seqVoice.noiseGain.gain.setTargetAtTime(p.noiseGain, t, 0.01);
+
+  // filter cut + keytrack
+  const q = p.res*20;
+  const baseCut = clamp(p.cutoff + (seqVoice.note-60)*100*p.keytrack, 40, 16000);
+  const ramp = 0.01;
+  seqVoice.f1.frequency.setTargetAtTime(baseCut, t, ramp);
+  seqVoice.f2.frequency.setTargetAtTime(baseCut, t, ramp);
+  seqVoice.f1.Q.setTargetAtTime(q, t, ramp);
+  seqVoice.f2.Q.setTargetAtTime(q, t, ramp);
+}
+
+function seqAmpEnv(vel=1, retrig=true){
+  if (!seqVoice) return;
+  const t=audio.currentTime;
+  const A=getNum('aA'),D=getNum('aD'),S=getNum('aS'),R=getNum('aR');
+  seqVoice.aEnv={R};
+
+  if (!retrig) return;
+
+  const g=seqVoice.amp.gain;
+  g.cancelScheduledValues(t);
+  g.setValueAtTime(Math.max(g.value,0.00001), t);
+  g.linearRampToValueAtTime(vel, t+A);
+  g.linearRampToValueAtTime(vel*S, t+A+D);
+}
+
+function seqFilterEnv(vel=1, retrig=true){
+  if (!seqVoice) return;
+  const t=audio.currentTime;
+  const A=getNum('fA'),D=getNum('fD'),S=getNum('fS'),R=getNum('fR');
+  seqVoice.fEnv={R};
+
+  if (!retrig) return;
+
+  const envAmt=getNum('env2cut'), base=getNum('cutoff');
+  const peak=clamp(base + Math.sign(envAmt)*Math.abs(envAmt)*5000*vel, 40,16000);
+  const sustain = base + (peak-base)*S;
+
+  [seqVoice.f1.frequency, seqVoice.f2.frequency].forEach(p=>{
+    p.cancelScheduledValues(t);
+    p.setValueAtTime(p.value, t);
+    p.linearRampToValueAtTime(peak, t+A);
+    p.linearRampToValueAtTime(sustain, t+A+D);
+  });
+}
+
+function seqNoteOn(midi, velocity=110, { glideSec=0, legato=false } = {}){
+  const p = params();
+  applyGlobalLFO();
+
+  const v = seqEnsureVoice();
+  v.note = midi;
+
+  // live params (incluye setup)
+  seqApplyLive(p);
+
+  const t = audio.currentTime;
+  const hz = midiToHz(midi);
+  const freqParam = v.core.parameters.get('freqHz');
+
+  freqParam.cancelScheduledValues(t);
+  const startHz = seqLastHz ?? hz;
+  freqParam.setValueAtTime(Math.max(10,startHz), t);
+
+  if (glideSec > 0){
+    freqParam.exponentialRampToValueAtTime(Math.max(10,hz), t + glideSec);
+  } else {
+    freqParam.setValueAtTime(Math.max(10,hz), t);
+  }
+
+  const vel = clamp(velocity/127, 0, 1);
+
+  if (!legato){
+    seqAmpEnv(vel, true);
+    seqFilterEnv(vel, true);
+  }
+
+  seqLastHz = hz;
+}
+
+function seqNoteOff(){
+  if (!seqVoice) return;
+
+  const t=audio.currentTime;
+  const R=seqVoice.aEnv?.R ?? 0.2;
+  const fR=seqVoice.fEnv?.R ?? 0.25;
+
+  const g=seqVoice.amp.gain;
+  g.cancelScheduledValues(t);
+  g.setValueAtTime(Math.max(g.value,0.00001), t);
+  g.exponentialRampToValueAtTime(0.00001, t+R);
+
+  [seqVoice.f1.frequency,seqVoice.f2.frequency].forEach(p=>{
+    p.cancelScheduledValues(t);
+    p.setValueAtTime(p.value,t);
+    p.linearRampToValueAtTime(getNum('cutoff'), t+fR);
+  });
+}
+
+// ========== Poly note handlers ==========
 function noteOn(midi, vel=100){
   if (getVal('polyMode')==='mono'){
     for (const [n,v] of voices){ v.noteOff(); voices.delete(n); }
@@ -447,11 +616,12 @@ function noteOff(midi){
   held.delete(midi);
 }
 
-// ----- LIVE apply para todas las voces -----
 function applyLiveToAllVoices(){
   const p = params();
   applyGlobalLFO();
   for (const v of voices.values()) v.applyLiveParams(p);
+  // si existe voz del sequencer, también
+  if (seqVoice) seqApplyLive(p);
 }
 
 // Master controls
@@ -462,7 +632,7 @@ document.getElementById('drive').addEventListener('input',e=>{
   drive.gain.setValueAtTime(parseFloat(e.target.value), audio.currentTime);
 });
 
-// ✅ Todos los controles que deben ser LIVE (mientras suena)
+// LIVE controls
 const liveControls = [
   'osc1Type','osc2Type','osc1Semi','osc2Semi','osc1PW',
   'osc1Gain','osc2Gain','subGain','noiseGain',
@@ -490,7 +660,7 @@ const meterBar=document.getElementById('meterBar');
   requestAnimationFrame(animate);
 })();
 
-// Arpegiador
+// Arpegiador (tu lógica original)
 let arpTimer=null, taps=[];
 function setArp(){
   if (arpTimer){ clearInterval(arpTimer); arpTimer=null; }
@@ -527,7 +697,7 @@ document.getElementById('tapBtn').addEventListener('click',()=>{
   }
 });
 
-// ✅ Keyboard mapping robusto (e.code)
+// Keyboard mapping
 const codeMap = {
   KeyZ:48, KeyS:49, KeyX:50, KeyD:51, KeyC:52,
   KeyV:53, KeyG:54, KeyB:55, KeyH:56, KeyN:57,
@@ -536,7 +706,6 @@ const codeMap = {
 };
 const downCodes = new Set();
 
-// Solo bloqueamos si realmente estás escribiendo texto
 function isTypingTarget(t){
   if (!t || !t.tagName) return false;
   const tag = t.tagName.toLowerCase();
@@ -556,7 +725,6 @@ window.addEventListener('keydown', async (e)=>{
 
   if (isTypingTarget(e.target)) return;
 
-  // si el foco quedó en range/select, lo soltamos para tocar al tiro
   const ae = document.activeElement;
   if (ae && ae !== document.body){
     const tag = ae.tagName ? ae.tagName.toLowerCase() : '';
@@ -608,7 +776,7 @@ if (navigator.requestMIDIAccess){
   }).catch(()=>midiStatus('No'));
 }
 
-// Presets
+// Presets (sin cambios funcionales tuyos)
 const presetList=document.getElementById('presetList'), presetName=document.getElementById('presetName');
 function ids(){
   return ['masterGain','polyMode','glide','drive',
@@ -638,7 +806,6 @@ function applySnap(o){
     el.dispatchEvent(new Event('input'));
     el.dispatchEvent(new Event('change'));
   });
-  // aseguramos LIVE después de cargar
   applyLiveToAllVoices();
 }
 function refresh(){
@@ -657,19 +824,40 @@ document.getElementById('savePreset').addEventListener('click',()=>{
   refresh();
 });
 document.getElementById('loadPreset').addEventListener('click',()=>{
-  const key='PULSE_PRESET_'+(presetList.value||'');
+  const key=presetList.value;
   const raw=localStorage.getItem(key);
   if(raw) applySnap(JSON.parse(raw));
 });
 document.getElementById('deletePreset').addEventListener('click',()=>{
-  const key='PULSE_PRESET_'+(presetList.value||'');
+  const key=presetList.value;
   if(localStorage.getItem(key)) localStorage.removeItem(key);
   refresh();
 });
 refresh();
 
-// init LFO UI → engine
+// init LFO UI
 applyGlobalLFO();
+
+// ========== Step Sequencer mount ==========
+const seq = createStepSequencer({
+  mountEl: document.getElementById('sequencerMount'),
+  steps: 16,
+  arm: async ()=>{ if (audio.state!=='running') await armAudio(); },
+  onStep: ({ midi, velocity, glideSec, legato, gateMs, stepOn, isSlide })=>{
+    if (!stepOn){
+      // silencios: cortamos nota del sequencer si venía sonando
+      seqNoteOff();
+      return;
+    }
+
+    seqNoteOn(midi, velocity, { glideSec, legato });
+
+    // si NO hay slide, apagamos por gate
+    if (!isSlide){
+      setTimeout(()=> seqNoteOff(), gateMs);
+    }
+  }
+});
 </script>
 </body>
 </html>

@@ -1,4 +1,3 @@
-// pulse2-worklet.js
 class Pulse2Osc extends AudioWorkletProcessor {
   static get parameterDescriptors() {
     return [
@@ -16,7 +15,6 @@ class Pulse2Osc extends AudioWorkletProcessor {
     super(opts);
     this.sr = sampleRate;
 
-    // Estado controlado por mensajes (cambia "en vivo" sin recrear la voz)
     this.state = {
       osc1Type: 'saw',
       osc2Type: 'saw',
@@ -26,19 +24,16 @@ class Pulse2Osc extends AudioWorkletProcessor {
       ring: false
     };
 
-    // fases
     this.p1 = 0;
     this.p2 = 0;
     this.pSub = 0;
 
-    // smoothing (para evitar zipper noise)
     this.smooth = {
       g1: 0.7,
       g2: 0.55,
       gSub: 0.35
     };
 
-    // coef de suavizado por sample (~5ms)
     this.slew = Math.exp(-1 / (this.sr * 0.005));
 
     this.port.onmessage = (e) => {
@@ -56,7 +51,6 @@ class Pulse2Osc extends AudioWorkletProcessor {
     };
   }
 
-  // polyBLEP: corrección rápida de discontinuidades
   polyBLEP(t, dt){
     if (t < dt) {
       const x = t / dt;
@@ -79,18 +73,15 @@ class Pulse2Osc extends AudioWorkletProcessor {
     }
 
     if (type === 'square') {
-      // duty 50% (PWM se hace afuera para osc1)
       y = phase < 0.5 ? 1 : -1;
       y += this.polyBLEP(phase, dt) - this.polyBLEP((phase + 0.5) % 1, dt);
       return y;
     }
 
-    // triangle (naive)
     y = 4 * Math.abs(phase - 0.5) - 1;
     return y;
   }
 
-  // helper: lee parámetro por sample o constante
   pAt(p, i){ return (p.length > 1) ? p[i] : p[0]; }
 
   process(inputs, outputs, parameters){
@@ -112,21 +103,17 @@ class Pulse2Osc extends AudioWorkletProcessor {
       const lfoCents = this.pAt(pLfoC, i);
       const lfoRatio = Math.pow(2, lfoCents / 1200);
 
-      // detune cents OSC2 (LIVE por sample)
       const detCents = this.pAt(pDet, i) || 0;
       const detRatio = Math.pow(2, detCents / 1200);
 
-      // frecuencias finales
       const f1 = Math.max(10, Math.min(20000, baseHz * osc1SemiRatio * lfoRatio));
       const f2 = Math.max(10, Math.min(20000, baseHz * osc2SemiRatio * detRatio * lfoRatio));
       const fSub = Math.max(10, Math.min(20000, baseHz * 0.5));
 
-      // fases actuales
       const ph1 = this.p1;
       const ph2 = this.p2;
       const phS = this.pSub;
 
-      // avanzar fases
       this.p1 += f1 / this.sr;
       if (this.p1 >= 1) {
         this.p1 -= 1;
@@ -139,19 +126,16 @@ class Pulse2Osc extends AudioWorkletProcessor {
       this.pSub += fSub / this.sr;
       if (this.pSub >= 1) this.pSub -= 1;
 
-      // PWM OSC1 (LIVE)
       let s1 = 0;
       if (this.state.osc1Type === 'square') {
         const pw = this.pAt(pPW, i);
         s1 = (ph1 < pw) ? 1 : -1;
         const dt = f1 / this.sr;
-        // BLEP aproximado en ambos flancos
         s1 += this.polyBLEP(ph1, dt) - this.polyBLEP((ph1 + pw) % 1, dt);
       } else {
         s1 = this.oscSample(this.state.osc1Type, ph1, f1);
       }
 
-      // OSC2
       let s2 = 0;
       if (this.state.osc2Type === 'square') {
         const dt2 = f2 / this.sr;
@@ -161,15 +145,12 @@ class Pulse2Osc extends AudioWorkletProcessor {
         s2 = this.oscSample(this.state.osc2Type, ph2, f2);
       }
 
-      // Sub
       const sSub = (phS < 0.5) ? 1 : -1;
 
-      // Gains (LIVE por sample + smoothing)
       const targetG1 = this.pAt(pG1, i);
       const targetG2 = this.pAt(pG2, i);
       const targetSub = this.pAt(pSub, i);
 
-      // slew smoothing (1-pole)
       this.smooth.g1 = this.smooth.g1 * this.slew + targetG1 * (1 - this.slew);
       this.smooth.g2 = this.smooth.g2 * this.slew + targetG2 * (1 - this.slew);
       this.smooth.gSub = this.smooth.gSub * this.slew + targetSub * (1 - this.slew);
@@ -178,11 +159,9 @@ class Pulse2Osc extends AudioWorkletProcessor {
       const g2 = this.smooth.g2;
       const gSub = this.smooth.gSub;
 
-      // Mix / Ring
       let core = this.state.ring ? (s1 * s2) : (g1 * s1 + g2 * s2);
       core += gSub * sSub;
 
-      // headroom
       out[i] = 0.42 * core;
     }
 
